@@ -2,9 +2,8 @@ package com.zionhuang.music.ui.player
 
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,11 +24,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,14 +42,9 @@ import com.zionhuang.music.LocalPlayerConnection
 import com.zionhuang.music.R
 import com.zionhuang.music.constants.MiniPlayerHeight
 import com.zionhuang.music.constants.ThumbnailCornerRadius
-import com.zionhuang.music.extensions.metadata
 import com.zionhuang.music.extensions.togglePlayPause
 import com.zionhuang.music.models.MediaMetadata
-import com.zionhuang.music.ui.utils.HorizontalPager
-import com.zionhuang.music.ui.utils.SnapLayoutInfoProvider
-import kotlinx.coroutines.flow.drop
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MiniPlayer(
     position: Long,
@@ -65,36 +55,8 @@ fun MiniPlayer(
     val isPlaying by playerConnection.isPlaying.collectAsState()
     val playbackState by playerConnection.playbackState.collectAsState()
     val error by playerConnection.error.collectAsState()
-    val windows by playerConnection.queueWindows.collectAsState()
-    val currentWindowIndex by playerConnection.currentWindowIndex.collectAsState()
-
-    val pagerState = rememberPagerState(
-        initialPage = currentWindowIndex.takeIf { it != -1 } ?: 0
-    )
-
-    val snapLayoutInfoProvider = remember(pagerState) {
-        SnapLayoutInfoProvider(
-            pagerState = pagerState,
-            positionInLayout = { _, _ -> 0f }
-        )
-    }
-
-    LaunchedEffect(pagerState, currentWindowIndex) {
-        if (windows.isNotEmpty()) {
-            try {
-                pagerState.animateScrollToPage(currentWindowIndex)
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }.drop(1).collect { index ->
-            if (!pagerState.isScrollInProgress && index != currentWindowIndex && windows.isNotEmpty()) {
-                playerConnection.player.seekToDefaultPosition(windows[index].firstPeriodIndex)
-            }
-        }
-    }
+    val mediaMetadata by playerConnection.mediaMetadata.collectAsState()
+    val canSkipNext by playerConnection.canSkipNext.collectAsState()
 
     Box(
         modifier = modifier
@@ -103,27 +65,20 @@ fun MiniPlayer(
             .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Horizontal))
     ) {
         LinearProgressIndicator(
-            progress = (position.toFloat() / duration).coerceIn(0f, 1f),
+            progress = { (position.toFloat() / duration).coerceIn(0f, 1f) },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(2.dp)
-                .align(Alignment.BottomCenter)
+                .height(3.dp)
+                .align(Alignment.BottomCenter),
         )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = modifier
                 .fillMaxSize()
-                .padding(end = 12.dp),
+                .padding(end = 6.dp),
         ) {
-            HorizontalPager(
-                state = pagerState,
-                flingBehavior = rememberSnapFlingBehavior(snapLayoutInfoProvider),
-                items = windows,
-                key = { it.uid.hashCode() },
-                beyondBoundsPageCount = 2,
-                modifier = Modifier.weight(1f)
-            ) { window ->
-                window.mediaItem.metadata?.let {
+            Box(Modifier.weight(1f)) {
+                mediaMetadata?.let {
                     MiniMediaInfo(
                         mediaMetadata = it,
                         error = error,
@@ -144,6 +99,16 @@ fun MiniPlayer(
             ) {
                 Icon(
                     painter = painterResource(if (playbackState == Player.STATE_ENDED) R.drawable.replay else if (isPlaying) R.drawable.pause else R.drawable.play),
+                    contentDescription = null
+                )
+            }
+
+            IconButton(
+                enabled = canSkipNext,
+                onClick = playerConnection::seekToNext
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.skip_next),
                     contentDescription = null
                 )
             }
@@ -205,6 +170,7 @@ fun MiniMediaInfo(
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.basicMarquee()
             )
             Text(
                 text = mediaMetadata.artists.joinToString { it.name },
@@ -212,6 +178,7 @@ fun MiniMediaInfo(
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.basicMarquee()
             )
         }
     }

@@ -1,12 +1,43 @@
 package com.zionhuang.music.db
 
-import androidx.room.*
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.RawQuery
+import androidx.room.Transaction
+import androidx.room.Update
+import androidx.room.Upsert
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.zionhuang.innertube.models.SongItem
 import com.zionhuang.innertube.pages.AlbumPage
 import com.zionhuang.innertube.pages.ArtistPage
-import com.zionhuang.music.constants.*
-import com.zionhuang.music.db.entities.*
+import com.zionhuang.music.constants.AlbumSortType
+import com.zionhuang.music.constants.ArtistSongSortType
+import com.zionhuang.music.constants.ArtistSortType
+import com.zionhuang.music.constants.PlaylistSortType
+import com.zionhuang.music.constants.SongSortType
+import com.zionhuang.music.db.entities.Album
+import com.zionhuang.music.db.entities.AlbumArtistMap
+import com.zionhuang.music.db.entities.AlbumEntity
+import com.zionhuang.music.db.entities.AlbumWithSongs
+import com.zionhuang.music.db.entities.Artist
+import com.zionhuang.music.db.entities.ArtistEntity
+import com.zionhuang.music.db.entities.Event
+import com.zionhuang.music.db.entities.EventWithSong
+import com.zionhuang.music.db.entities.FormatEntity
+import com.zionhuang.music.db.entities.LyricsEntity
+import com.zionhuang.music.db.entities.Playlist
+import com.zionhuang.music.db.entities.PlaylistEntity
+import com.zionhuang.music.db.entities.PlaylistSong
+import com.zionhuang.music.db.entities.PlaylistSongMap
+import com.zionhuang.music.db.entities.RelatedSongMap
+import com.zionhuang.music.db.entities.SearchHistory
+import com.zionhuang.music.db.entities.Song
+import com.zionhuang.music.db.entities.SongAlbumMap
+import com.zionhuang.music.db.entities.SongArtistMap
+import com.zionhuang.music.db.entities.SongEntity
 import com.zionhuang.music.extensions.reversed
 import com.zionhuang.music.extensions.toSQLiteQuery
 import com.zionhuang.music.models.MediaMetadata
@@ -146,6 +177,52 @@ interface DatabaseDao {
     @Transaction
     @Query(
         """
+        SELECT song.*
+        FROM (SELECT n.songId      AS eid,
+                     SUM(playTime) AS oldPlayTime,
+                     newPlayTime
+              FROM event
+                       JOIN
+                   (SELECT songId, SUM(playTime) AS newPlayTime
+                    FROM event
+                    WHERE timestamp > (:now - 86400000 * 30 * 1)
+                    GROUP BY songId
+                    ORDER BY newPlayTime) as n
+                   ON event.songId = n.songId
+              WHERE timestamp < (:now - 86400000 * 30 * 1)
+              GROUP BY n.songId
+              ORDER BY oldPlayTime) AS t
+                 JOIN song on song.id = t.eid
+        WHERE 0.2 * t.oldPlayTime > t.newPlayTime
+        LIMIT 100
+    """
+    )
+    fun forgottenFavorites(now: Long = System.currentTimeMillis()): Flow<List<Song>>
+
+    @Transaction
+    @Query(
+        """
+        SELECT song.*
+        FROM event
+                 JOIN
+             song ON event.songId = song.id
+        WHERE event.timestamp > (:now - 86400000 * 7 * 2)
+        GROUP BY song.albumId
+        HAVING song.albumId IS NOT NULL
+        ORDER BY sum(event.playTime) DESC
+        LIMIT :limit
+        OFFSET :offset
+        """,
+    )
+    fun recommendedAlbum(
+        now: Long = System.currentTimeMillis(),
+        limit: Int = 5,
+        offset: Int = 0,
+    ): Flow<List<Song>>
+
+    @Transaction
+    @Query(
+        """
         SELECT *
         FROM song
         WHERE id IN (SELECT songId
@@ -153,10 +230,11 @@ interface DatabaseDao {
                      WHERE timestamp > :fromTimeStamp
                      GROUP BY songId
                      ORDER BY SUM(playTime) DESC
-                     LIMIT :limit)
+                     LIMIT :limit
+                     OFFSET :offset)
     """
     )
-    fun mostPlayedSongs(fromTimeStamp: Long, limit: Int = 6): Flow<List<Song>>
+    fun mostPlayedSongs(fromTimeStamp: Long, limit: Int = 6, offset: Int = 0): Flow<List<Song>>
 
     @Transaction
     @Query(
@@ -186,28 +264,32 @@ interface DatabaseDao {
     @Transaction
     @Query(
         """
-        SELECT albumId
-        FROM song
-                 JOIN (SELECT songId, SUM(playTime) AS songTotalPlayTime
-                       FROM event
-                       WHERE timestamp > :fromTimeStamp
-                       GROUP BY songId) AS e
-                      ON song.id = e.songId
-        WHERE albumId IS NOT NULL
-        GROUP BY albumId
-        ORDER BY SUM(songTotalPlayTime) DESC
-        LIMIT :limit
+        SELECT *
+        FROM album
+        WHERE id IN (SELECT song.albumId
+                     FROM event
+                              JOIN
+                          song
+                          ON event.songId = song.id
+                     WHERE event.timestamp > :fromTimeStamp
+                     GROUP BY song.albumId
+                     HAVING song.albumId IS NOT NULL
+                     ORDER BY sum(event.playTime) DESC
+                     LIMIT :limit OFFSET :offset)
     """
     )
-    fun mostPlayedAlbums(fromTimeStamp: Long, limit: Int = 6): Flow<List<String>>
+    fun mostPlayedAlbums(fromTimeStamp: Long, limit: Int = 6, offset: Int = 0): Flow<List<Album>>
 
     @Transaction
     @Query("SELECT * FROM song WHERE id = :songId")
     fun song(songId: String?): Flow<Song?>
 
+    @Query("SELECT * FROM song_artist_map WHERE songId = :songId")
+    fun songArtistMap(songId: String): List<SongArtistMap>
+
     @Transaction
-    @Query("SELECT * FROM song WHERE id IN (:songIds)")
-    fun songs(songIds: List<String>): Flow<List<Song>>
+    @Query("SELECT * FROM song")
+    fun allSongs(): Flow<List<Song>>
 
     @Query("SELECT * FROM format WHERE id = :id")
     fun format(id: String?): Flow<FormatEntity?>
@@ -216,16 +298,50 @@ interface DatabaseDao {
     fun lyrics(id: String?): Flow<LyricsEntity?>
 
     @Transaction
-    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE bookmarkedAt IS NOT NULL ORDER BY bookmarkedAt")
+    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE songCount > 0 ORDER BY rowId")
     fun artistsByCreateDateAsc(): Flow<List<Artist>>
 
     @Transaction
-    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE bookmarkedAt IS NOT NULL ORDER BY name")
+    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE songCount > 0 ORDER BY name")
     fun artistsByNameAsc(): Flow<List<Artist>>
 
     @Transaction
-    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE bookmarkedAt IS NOT NULL ORDER BY songCount")
+    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE songCount > 0 ORDER BY songCount")
     fun artistsBySongCountAsc(): Flow<List<Artist>>
+
+    @Transaction
+    @Query(
+        """
+        SELECT artist.*,
+               (SELECT COUNT(1)
+                FROM song_artist_map
+                         JOIN song ON song_artist_map.songId = song.id
+                WHERE artistId = artist.id
+                  AND song.inLibrary IS NOT NULL) AS songCount
+        FROM artist
+                 JOIN(SELECT artistId, SUM(totalPlayTime) AS totalPlayTime
+                      FROM song_artist_map
+                               JOIN song
+                                    ON song_artist_map.songId = song.id
+                      GROUP BY artistId
+                      ORDER BY totalPlayTime)
+                     ON artist.id = artistId
+        WHERE songCount > 0
+    """
+    )
+    fun artistsByPlayTimeAsc(): Flow<List<Artist>>
+
+    @Transaction
+    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE bookmarkedAt IS NOT NULL ORDER BY bookmarkedAt")
+    fun artistsBookmarkedByCreateDateAsc(): Flow<List<Artist>>
+
+    @Transaction
+    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE bookmarkedAt IS NOT NULL ORDER BY name")
+    fun artistsBookmarkedByNameAsc(): Flow<List<Artist>>
+
+    @Transaction
+    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE bookmarkedAt IS NOT NULL ORDER BY songCount")
+    fun artistsBookmarkedBySongCountAsc(): Flow<List<Artist>>
 
     @Transaction
     @Query(
@@ -247,7 +363,7 @@ interface DatabaseDao {
         WHERE bookmarkedAt IS NOT NULL
     """
     )
-    fun artistsByPlayTimeAsc(): Flow<List<Artist>>
+    fun artistsBookmarkedByPlayTimeAsc(): Flow<List<Artist>>
 
     fun artists(sortType: ArtistSortType, descending: Boolean) =
         when (sortType) {
@@ -255,33 +371,45 @@ interface DatabaseDao {
             ArtistSortType.NAME -> artistsByNameAsc()
             ArtistSortType.SONG_COUNT -> artistsBySongCountAsc()
             ArtistSortType.PLAY_TIME -> artistsByPlayTimeAsc()
-        }.map { it.reversed(descending) }
+        }.map { artists ->
+            artists
+                .filter { it.artist.isYouTubeArtist }
+                .reversed(descending)
+        }
 
-    @Query("SELECT * FROM artist WHERE id = :id")
-    fun artist(id: String): Flow<ArtistEntity?>
+    fun artistsBookmarked(sortType: ArtistSortType, descending: Boolean) =
+        when (sortType) {
+            ArtistSortType.CREATE_DATE -> artistsBookmarkedByCreateDateAsc()
+            ArtistSortType.NAME -> artistsBookmarkedByNameAsc()
+            ArtistSortType.SONG_COUNT -> artistsBookmarkedBySongCountAsc()
+            ArtistSortType.PLAY_TIME -> artistsBookmarkedByPlayTimeAsc()
+        }.map { artists ->
+            artists
+                .filter { it.artist.isYouTubeArtist }
+                .reversed(descending)
+        }
+
+    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE id = :id")
+    fun artist(id: String): Flow<Artist?>
 
     @Transaction
-    @Query("SELECT * FROM album ORDER BY rowId")
-    fun albumsByRowIdAsc(): Flow<List<Album>>
-
-    @Transaction
-    @Query("SELECT * FROM album ORDER BY createDate")
+    @Query("SELECT * FROM album WHERE EXISTS(SELECT * FROM song WHERE song.albumId = album.id AND song.inLibrary IS NOT NULL) ORDER BY rowId")
     fun albumsByCreateDateAsc(): Flow<List<Album>>
 
     @Transaction
-    @Query("SELECT * FROM album ORDER BY title")
+    @Query("SELECT * FROM album WHERE EXISTS(SELECT * FROM song WHERE song.albumId = album.id AND song.inLibrary IS NOT NULL) ORDER BY title")
     fun albumsByNameAsc(): Flow<List<Album>>
 
     @Transaction
-    @Query("SELECT * FROM album ORDER BY year")
+    @Query("SELECT * FROM album WHERE EXISTS(SELECT * FROM song WHERE song.albumId = album.id AND song.inLibrary IS NOT NULL) ORDER BY year")
     fun albumsByYearAsc(): Flow<List<Album>>
 
     @Transaction
-    @Query("SELECT * FROM album ORDER BY songCount")
+    @Query("SELECT * FROM album WHERE EXISTS(SELECT * FROM song WHERE song.albumId = album.id AND song.inLibrary IS NOT NULL) ORDER BY songCount")
     fun albumsBySongCountAsc(): Flow<List<Album>>
 
     @Transaction
-    @Query("SELECT * FROM album ORDER BY duration")
+    @Query("SELECT * FROM album WHERE EXISTS(SELECT * FROM song WHERE song.albumId = album.id AND song.inLibrary IS NOT NULL) ORDER BY duration")
     fun albumsByLengthAsc(): Flow<List<Album>>
 
     @Transaction
@@ -291,17 +419,52 @@ interface DatabaseDao {
         FROM album
                  JOIN song
                       ON song.albumId = album.id
+        WHERE EXISTS(SELECT * FROM song WHERE song.albumId = album.id AND song.inLibrary IS NOT NULL)
         GROUP BY album.id
         ORDER BY SUM(song.totalPlayTime)
     """
     )
     fun albumsByPlayTimeAsc(): Flow<List<Album>>
 
+    @Transaction
+    @Query("SELECT * FROM album WHERE bookmarkedAt IS NOT NULL ORDER BY rowId")
+    fun albumsLikedByCreateDateAsc(): Flow<List<Album>>
+
+    @Transaction
+    @Query("SELECT * FROM album WHERE bookmarkedAt IS NOT NULL ORDER BY title")
+    fun albumsLikedByNameAsc(): Flow<List<Album>>
+
+    @Transaction
+    @Query("SELECT * FROM album WHERE bookmarkedAt IS NOT NULL ORDER BY year")
+    fun albumsLikedByYearAsc(): Flow<List<Album>>
+
+    @Transaction
+    @Query("SELECT * FROM album WHERE bookmarkedAt IS NOT NULL ORDER BY songCount")
+    fun albumsLikedBySongCountAsc(): Flow<List<Album>>
+
+    @Transaction
+    @Query("SELECT * FROM album WHERE bookmarkedAt IS NOT NULL ORDER BY duration")
+    fun albumsLikedByLengthAsc(): Flow<List<Album>>
+
+    @Transaction
+    @Query(
+        """
+        SELECT album.*
+        FROM album
+                 JOIN song
+                      ON song.albumId = album.id
+        WHERE bookmarkedAt IS NOT NULL
+        GROUP BY album.id
+        ORDER BY SUM(song.totalPlayTime)
+    """
+    )
+    fun albumsLikedByPlayTimeAsc(): Flow<List<Album>>
+
     fun albums(sortType: AlbumSortType, descending: Boolean) =
         when (sortType) {
             AlbumSortType.CREATE_DATE -> albumsByCreateDateAsc()
             AlbumSortType.NAME -> albumsByNameAsc()
-            AlbumSortType.ARTIST -> albumsByRowIdAsc().map { albums ->
+            AlbumSortType.ARTIST -> albumsByCreateDateAsc().map { albums ->
                 albums.sortedBy { album ->
                     album.artists.joinToString(separator = "") { it.name }
                 }
@@ -313,6 +476,22 @@ interface DatabaseDao {
             AlbumSortType.PLAY_TIME -> albumsByPlayTimeAsc()
         }.map { it.reversed(descending) }
 
+    fun albumsLiked(sortType: AlbumSortType, descending: Boolean) =
+        when (sortType) {
+            AlbumSortType.CREATE_DATE -> albumsLikedByCreateDateAsc()
+            AlbumSortType.NAME -> albumsLikedByNameAsc()
+            AlbumSortType.ARTIST -> albumsLikedByCreateDateAsc().map { albums ->
+                albums.sortedBy { album ->
+                    album.artists.joinToString(separator = "") { it.name }
+                }
+            }
+
+            AlbumSortType.YEAR -> albumsLikedByYearAsc()
+            AlbumSortType.SONG_COUNT -> albumsLikedBySongCountAsc()
+            AlbumSortType.LENGTH -> albumsLikedByLengthAsc()
+            AlbumSortType.PLAY_TIME -> albumsLikedByPlayTimeAsc()
+        }.map { it.reversed(descending) }
+
     @Transaction
     @Query("SELECT * FROM album WHERE id = :id")
     fun album(id: String): Flow<Album?>
@@ -320,6 +499,9 @@ interface DatabaseDao {
     @Transaction
     @Query("SELECT * FROM album WHERE id = :albumId")
     fun albumWithSongs(albumId: String): Flow<AlbumWithSongs?>
+
+    @Query("SELECT * FROM album_artist_map WHERE albumId = :albumId")
+    fun albumArtistMaps(albumId: String): List<AlbumArtistMap>
 
     @Transaction
     @Query("SELECT *, (SELECT COUNT(*) FROM playlist_song_map WHERE playlistId = playlist.id) AS songCount FROM playlist ORDER BY rowId")
@@ -344,16 +526,36 @@ interface DatabaseDao {
     @Query("SELECT *, (SELECT COUNT(*) FROM playlist_song_map WHERE playlistId = playlist.id) AS songCount FROM playlist WHERE id = :playlistId")
     fun playlist(playlistId: String): Flow<Playlist?>
 
+    @Query("SELECT songId from playlist_song_map WHERE playlistId = :playlistId AND songId IN (:songIds)")
+    fun playlistDuplicates(
+        playlistId: String,
+        songIds: List<String>,
+    ): List<String>
+
+    @Transaction
+    fun addSongToPlaylist(playlist: Playlist, songIds: List<String>) {
+        var position = playlist.songCount
+        songIds.forEach { id ->
+            insert(
+                PlaylistSongMap(
+                    songId = id,
+                    playlistId = playlist.id,
+                    position = position++
+                )
+            )
+        }
+    }
+
     @Transaction
     @Query("SELECT * FROM song WHERE title LIKE '%' || :query || '%' AND inLibrary IS NOT NULL LIMIT :previewSize")
     fun searchSongs(query: String, previewSize: Int = Int.MAX_VALUE): Flow<List<Song>>
 
     @Transaction
-    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE name LIKE '%' || :query || '%'  AND bookmarkedAt IS NOT NULL LIMIT :previewSize")
+    @Query("SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount FROM artist WHERE name LIKE '%' || :query || '%' AND songCount > 0 LIMIT :previewSize")
     fun searchArtists(query: String, previewSize: Int = Int.MAX_VALUE): Flow<List<Artist>>
 
     @Transaction
-    @Query("SELECT * FROM album WHERE title LIKE '%' || :query || '%' LIMIT :previewSize")
+    @Query("SELECT * FROM album WHERE title LIKE '%' || :query || '%' AND EXISTS(SELECT * FROM song WHERE song.albumId = album.id AND song.inLibrary IS NOT NULL) LIMIT :previewSize")
     fun searchAlbums(query: String, previewSize: Int = Int.MAX_VALUE): Flow<List<Album>>
 
     @Transaction
@@ -376,11 +578,27 @@ interface DatabaseDao {
     @Query("UPDATE song SET totalPlayTime = totalPlayTime + :playTime WHERE id = :songId")
     fun incrementTotalPlayTime(songId: String, playTime: Long)
 
-    @Query("UPDATE song SET inLibrary = :inLibrary WHERE id = :songId")
+    // If the song is already in the library, the time won't be updated
+    @Query("UPDATE song SET inLibrary = :inLibrary WHERE id = :songId AND (inLibrary IS NULL OR :inLibrary IS NULL)")
     fun inLibrary(songId: String, inLibrary: LocalDateTime?)
 
     @Query("SELECT COUNT(1) FROM related_song_map WHERE songId = :songId LIMIT 1")
     fun hasRelatedSongs(songId: String): Boolean
+
+    @Transaction
+    @Query(
+        """
+        SELECT song.*
+        FROM (SELECT *
+              FROM related_song_map
+              GROUP BY relatedSongId) map
+                 JOIN
+             song
+             ON song.id = map.relatedSongId
+        WHERE songId = :songId
+        """
+    )
+    fun relatedSongs(songId: String): List<Song>
 
     @Query(
         """
@@ -495,24 +713,33 @@ interface DatabaseDao {
     }
 
     @Transaction
-    fun insert(albumWithSongs: AlbumWithSongs) {
-        if (insert(albumWithSongs.album) == -1L) return
-        albumWithSongs.songs.map(Song::toMediaMetadata).forEach(::insert)
-        albumWithSongs.songs.mapIndexed { index, song ->
-            SongAlbumMap(
-                songId = song.id,
-                albumId = albumWithSongs.album.id,
-                index = index
+    fun update(song: Song, mediaMetadata: MediaMetadata) {
+        update(
+            song.song.copy(
+                title = mediaMetadata.title,
+                duration = mediaMetadata.duration,
+                thumbnailUrl = mediaMetadata.thumbnailUrl,
+                albumId = mediaMetadata.album?.id,
+                albumName = mediaMetadata.album?.title,
             )
-        }.forEach(::upsert)
-        albumWithSongs.artists.forEach(::insert)
-        albumWithSongs.artists.mapIndexed { index, artist ->
-            AlbumArtistMap(
-                albumId = albumWithSongs.album.id,
-                artistId = artist.id,
-                order = index
+        )
+        songArtistMap(song.id).forEach(::delete)
+        mediaMetadata.artists.forEachIndexed { index, artist ->
+            val artistId = artist.id ?: artistByName(artist.name)?.id ?: ArtistEntity.generateArtistId()
+            insert(
+                ArtistEntity(
+                    id = artistId,
+                    name = artist.name
+                )
             )
-        }.forEach(::insert)
+            insert(
+                SongArtistMap(
+                    songId = song.id,
+                    artistId = artistId,
+                    position = index
+                )
+            )
+        }
     }
 
     @Update
@@ -520,6 +747,9 @@ interface DatabaseDao {
 
     @Update
     fun update(artist: ArtistEntity)
+
+    @Update
+    fun update(album: AlbumEntity)
 
     @Update
     fun update(playlist: PlaylistEntity)
@@ -537,6 +767,51 @@ interface DatabaseDao {
         )
     }
 
+    @Transaction
+    fun update(album: AlbumEntity, albumPage: AlbumPage) {
+        update(
+            album.copy(
+                id = albumPage.album.browseId,
+                title = albumPage.album.title,
+                year = albumPage.album.year,
+                thumbnailUrl = albumPage.album.thumbnail,
+                songCount = albumPage.songs.size,
+                duration = albumPage.songs.sumOf { it.duration ?: 0 }
+            )
+        )
+        albumPage.songs.map(SongItem::toMediaMetadata)
+            .onEach(::insert)
+            .mapIndexed { index, song ->
+                SongAlbumMap(
+                    songId = song.id,
+                    albumId = albumPage.album.browseId,
+                    index = index
+                )
+            }
+            .forEach(::upsert)
+
+        albumPage.album.artists?.let { artists ->
+            // Recreate album artists
+            albumArtistMaps(album.id).forEach(::delete)
+            artists
+                .map { artist ->
+                    ArtistEntity(
+                        id = artist.id ?: artistByName(artist.name)?.id ?: ArtistEntity.generateArtistId(),
+                        name = artist.name
+                    )
+                }
+                .onEach(::insert)
+                .mapIndexed { index, artist ->
+                    AlbumArtistMap(
+                        albumId = albumPage.album.browseId,
+                        artistId = artist.id,
+                        order = index
+                    )
+                }
+                .forEach(::insert)
+        }
+    }
+
     @Upsert
     fun upsert(map: SongAlbumMap)
 
@@ -550,10 +825,16 @@ interface DatabaseDao {
     fun delete(song: SongEntity)
 
     @Delete
+    fun delete(songArtistMap: SongArtistMap)
+
+    @Delete
     fun delete(artist: ArtistEntity)
 
     @Delete
     fun delete(album: AlbumEntity)
+
+    @Delete
+    fun delete(albumArtistMap: AlbumArtistMap)
 
     @Delete
     fun delete(playlist: PlaylistEntity)
