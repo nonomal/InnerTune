@@ -8,11 +8,26 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 val DynamicThemeKey = booleanPreferencesKey("dynamicTheme")
 val DarkModeKey = stringPreferencesKey("darkMode")
 val PureBlackKey = booleanPreferencesKey("pureBlack")
+val PlayerTextAlignmentKey = stringPreferencesKey("playerTextAlignment")
+val SliderStyleKey = stringPreferencesKey("sliderStyle")
+
+enum class SliderStyle {
+    DEFAULT, SQUIGGLY
+}
+
 val DefaultOpenTabKey = stringPreferencesKey("defaultOpenTab")
+val GridCellSizeKey = stringPreferencesKey("gridCellSize")
+
+enum class GridCellSize {
+    SMALL, BIG
+}
 
 const val SYSTEM_DEFAULT = "SYSTEM_DEFAULT"
 val ContentLanguageKey = stringPreferencesKey("contentLanguage")
 val ContentCountryKey = stringPreferencesKey("contentCountry")
+val EnableKugouKey = booleanPreferencesKey("enableKugou")
+val EnableLrcLibKey = booleanPreferencesKey("enableLrcLib")
+val HideExplicitKey = booleanPreferencesKey("hideExplicit")
 val ProxyEnabledKey = booleanPreferencesKey("proxyEnabled")
 val ProxyUrlKey = stringPreferencesKey("proxyUrl")
 val ProxyTypeKey = stringPreferencesKey("proxyType")
@@ -26,18 +41,26 @@ enum class AudioQuality {
 val PersistentQueueKey = booleanPreferencesKey("persistentQueue")
 val SkipSilenceKey = booleanPreferencesKey("skipSilence")
 val AudioNormalizationKey = booleanPreferencesKey("audioNormalization")
+val AutoLoadMoreKey = booleanPreferencesKey("autoLoadMore")
+val AutoSkipNextOnErrorKey = booleanPreferencesKey("autoSkipNextOnError")
+val StopMusicOnTaskClearKey = booleanPreferencesKey("stopMusicOnTaskClear")
 
 val MaxImageCacheSizeKey = intPreferencesKey("maxImageCacheSize")
 val MaxSongCacheSizeKey = intPreferencesKey("maxSongCacheSize")
 
 val PauseListenHistoryKey = booleanPreferencesKey("pauseListenHistory")
 val PauseSearchHistoryKey = booleanPreferencesKey("pauseSearchHistory")
-val EnableKugouKey = booleanPreferencesKey("enableKugou")
+val UseLoginForBrowse = booleanPreferencesKey("useLoginForBrowse")
+val DisableScreenshotKey = booleanPreferencesKey("disableScreenshot")
+
+val DiscordTokenKey = stringPreferencesKey("discordToken")
+val DiscordInfoDismissedKey = booleanPreferencesKey("discordInfoDismissed_v2")
+val DiscordUsernameKey = stringPreferencesKey("discordUsername")
+val DiscordNameKey = stringPreferencesKey("discordName")
+val EnableDiscordRPCKey = booleanPreferencesKey("discordRPCEnable")
 
 val SongSortTypeKey = stringPreferencesKey("songSortType")
 val SongSortDescendingKey = booleanPreferencesKey("songSortDescending")
-val DownloadedSongSortTypeKey = stringPreferencesKey("songSortType")
-val DownloadedSongSortDescendingKey = booleanPreferencesKey("songSortDescending")
 val PlaylistSongSortTypeKey = stringPreferencesKey("playlistSongSortType")
 val PlaylistSongSortDescendingKey = booleanPreferencesKey("playlistSongSortDescending")
 val ArtistSortTypeKey = stringPreferencesKey("artistSortType")
@@ -49,13 +72,25 @@ val PlaylistSortDescendingKey = booleanPreferencesKey("playlistSortDescending")
 val ArtistSongSortTypeKey = stringPreferencesKey("artistSongSortType")
 val ArtistSongSortDescendingKey = booleanPreferencesKey("artistSongSortDescending")
 
+val SongFilterKey = stringPreferencesKey("songFilter")
+val ArtistFilterKey = stringPreferencesKey("artistFilter")
+val ArtistViewTypeKey = stringPreferencesKey("artistViewType")
+val AlbumFilterKey = stringPreferencesKey("albumFilter")
+val AlbumViewTypeKey = stringPreferencesKey("albumViewType")
+val PlaylistViewTypeKey = stringPreferencesKey("playlistViewType")
+
 val PlaylistEditLockKey = booleanPreferencesKey("playlistEditLock")
 
-enum class SongSortType {
-    CREATE_DATE, NAME, ARTIST, PLAY_TIME
+enum class LibraryViewType {
+    LIST, GRID;
+
+    fun toggle() = when (this) {
+        LIST -> GRID
+        GRID -> LIST
+    }
 }
 
-enum class DownloadedSongSortType {
+enum class SongSortType {
     CREATE_DATE, NAME, ARTIST, PLAY_TIME
 }
 
@@ -79,10 +114,21 @@ enum class PlaylistSortType {
     CREATE_DATE, NAME, SONG_COUNT
 }
 
-val ShowLyricsKey = booleanPreferencesKey("showLyrics")
-val LyricsTextPositionKey = stringPreferencesKey("lyricsTextPosition")
+enum class SongFilter {
+    LIBRARY, LIKED, DOWNLOADED
+}
 
-val NavTabConfigKey = stringPreferencesKey("navTabConfig")
+enum class ArtistFilter {
+    LIBRARY, LIKED
+}
+
+enum class AlbumFilter {
+    LIBRARY, LIKED
+}
+
+val ShowLyricsKey = booleanPreferencesKey("showLyrics")
+val TranslateLyricsKey = booleanPreferencesKey("translateLyrics")
+val LockQueueKey = booleanPreferencesKey("lockQueue")
 
 val PlayerVolumeKey = floatPreferencesKey("playerVolume")
 val RepeatModeKey = intPreferencesKey("repeatMode")
@@ -90,13 +136,19 @@ val RepeatModeKey = intPreferencesKey("repeatMode")
 val SearchSourceKey = stringPreferencesKey("searchSource")
 
 enum class SearchSource {
-    LOCAL, ONLINE
+    LOCAL, ONLINE;
+
+    fun toggle() = when (this) {
+        LOCAL -> ONLINE
+        ONLINE -> LOCAL
+    }
 }
 
 val VisitorDataKey = stringPreferencesKey("visitorData")
 val InnerTubeCookieKey = stringPreferencesKey("innerTubeCookie")
 val AccountNameKey = stringPreferencesKey("accountName")
 val AccountEmailKey = stringPreferencesKey("accountEmail")
+val AccountChannelHandleKey = stringPreferencesKey("accountChannelHandle")
 
 val LanguageCodeToName = mapOf(
     "af" to "Afrikaans",

@@ -1,14 +1,17 @@
 package com.zionhuang.music.ui.screens.settings
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -17,7 +20,7 @@ import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -29,15 +32,20 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import coil.annotation.ExperimentalCoilApi
 import coil.imageLoader
+import com.zionhuang.music.BuildConfig
 import com.zionhuang.music.LocalPlayerAwareWindowInsets
 import com.zionhuang.music.LocalPlayerConnection
 import com.zionhuang.music.R
 import com.zionhuang.music.constants.MaxImageCacheSizeKey
 import com.zionhuang.music.constants.MaxSongCacheSizeKey
+import com.zionhuang.music.extensions.tryOrNull
+import com.zionhuang.music.ui.component.IconButton
 import com.zionhuang.music.ui.component.ListPreference
 import com.zionhuang.music.ui.component.PreferenceEntry
 import com.zionhuang.music.ui.component.PreferenceGroupTitle
+import com.zionhuang.music.ui.utils.backToMain
 import com.zionhuang.music.ui.utils.formatFileSize
+import com.zionhuang.music.utils.TranslationHelper
 import com.zionhuang.music.utils.rememberPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -56,16 +64,26 @@ fun StorageSettings(
     val downloadCache = LocalPlayerConnection.current?.service?.downloadCache ?: return
 
     val coroutineScope = rememberCoroutineScope()
+    val (maxImageCacheSize, onMaxImageCacheSizeChange) = rememberPreference(key = MaxImageCacheSizeKey, defaultValue = 512)
+    val (maxSongCacheSize, onMaxSongCacheSizeChange) = rememberPreference(key = MaxSongCacheSizeKey, defaultValue = 1024)
 
     var imageCacheSize by remember {
-        mutableStateOf(imageDiskCache.size)
+        mutableLongStateOf(imageDiskCache.size)
     }
     var playerCacheSize by remember {
-        mutableStateOf(playerCache.cacheSpace)
+        mutableLongStateOf(tryOrNull { playerCache.cacheSpace } ?: 0)
     }
     var downloadCacheSize by remember {
-        mutableStateOf(downloadCache.cacheSpace)
+        mutableLongStateOf(tryOrNull { downloadCache.cacheSpace } ?: 0)
     }
+    val imageCacheProgress by animateFloatAsState(
+        targetValue = (imageCacheSize.toFloat() / imageDiskCache.maxSize).coerceIn(0f, 1f),
+        label = ""
+    )
+    val playerCacheProgress by animateFloatAsState(
+        targetValue = (playerCacheSize.toFloat() / (maxSongCacheSize * 1024 * 1024L)).coerceIn(0f, 1f),
+        label = ""
+    )
 
     LaunchedEffect(imageDiskCache) {
         while (isActive) {
@@ -76,24 +94,23 @@ fun StorageSettings(
     LaunchedEffect(playerCache) {
         while (isActive) {
             delay(500)
-            playerCacheSize = playerCache.cacheSpace
+            playerCacheSize = tryOrNull { playerCache.cacheSpace } ?: 0
         }
     }
     LaunchedEffect(downloadCache) {
         while (isActive) {
             delay(500)
-            downloadCacheSize = downloadCache.cacheSpace
+            downloadCacheSize = tryOrNull { downloadCache.cacheSpace } ?: 0
         }
     }
 
-    val (maxImageCacheSize, onMaxImageCacheSizeChange) = rememberPreference(key = MaxImageCacheSizeKey, defaultValue = 512)
-    val (maxSongCacheSize, onMaxSongCacheSizeChange) = rememberPreference(key = MaxSongCacheSizeKey, defaultValue = 1024)
-
     Column(
         Modifier
-            .windowInsetsPadding(LocalPlayerAwareWindowInsets.current)
+            .windowInsetsPadding(LocalPlayerAwareWindowInsets.current.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
             .verticalScroll(rememberScrollState())
     ) {
+        Spacer(Modifier.windowInsetsPadding(LocalPlayerAwareWindowInsets.current.only(WindowInsetsSides.Top)))
+
         PreferenceGroupTitle(
             title = stringResource(R.string.downloaded_songs)
         )
@@ -105,7 +122,7 @@ fun StorageSettings(
         )
 
         PreferenceEntry(
-            title = stringResource(R.string.clear_all_downloads),
+            title = { Text(stringResource(R.string.clear_all_downloads)) },
             onClick = {
                 coroutineScope.launch(Dispatchers.IO) {
                     downloadCache.keys.forEach { key ->
@@ -127,10 +144,10 @@ fun StorageSettings(
             )
         } else {
             LinearProgressIndicator(
-                progress = (playerCacheSize.toFloat() / (maxSongCacheSize * 1024 * 1024L)).coerceIn(0f, 1f),
+                progress = { playerCacheProgress },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
             )
 
             Text(
@@ -141,7 +158,7 @@ fun StorageSettings(
         }
 
         ListPreference(
-            title = stringResource(R.string.max_cache_size),
+            title = { Text(stringResource(R.string.max_cache_size)) },
             selectedValue = maxSongCacheSize,
             values = listOf(128, 256, 512, 1024, 2048, 4096, 8192, -1),
             valueText = {
@@ -151,7 +168,7 @@ fun StorageSettings(
         )
 
         PreferenceEntry(
-            title = stringResource(R.string.clear_song_cache),
+            title = { Text(stringResource(R.string.clear_song_cache)) },
             onClick = {
                 coroutineScope.launch(Dispatchers.IO) {
                     playerCache.keys.forEach { key ->
@@ -166,10 +183,10 @@ fun StorageSettings(
         )
 
         LinearProgressIndicator(
-            progress = (imageCacheSize.toFloat() / imageDiskCache.maxSize).coerceIn(0f, 1f),
+            progress = { imageCacheProgress },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
         )
 
         Text(
@@ -179,7 +196,7 @@ fun StorageSettings(
         )
 
         ListPreference(
-            title = stringResource(R.string.max_cache_size),
+            title = { Text(stringResource(R.string.max_cache_size)) },
             selectedValue = maxImageCacheSize,
             values = listOf(128, 256, 512, 1024, 2048, 4096, 8192),
             valueText = { formatFileSize(it * 1024 * 1024L) },
@@ -187,19 +204,37 @@ fun StorageSettings(
         )
 
         PreferenceEntry(
-            title = stringResource(R.string.clear_image_cache),
+            title = { Text(stringResource(R.string.clear_image_cache)) },
             onClick = {
                 coroutineScope.launch(Dispatchers.IO) {
                     imageDiskCache.clear()
                 }
             },
         )
+
+        if (BuildConfig.FLAVOR != "foss") {
+            PreferenceGroupTitle(
+                title = stringResource(R.string.translation_models)
+            )
+
+            PreferenceEntry(
+                title = { Text(stringResource(R.string.clear_translation_models)) },
+                onClick = {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        TranslationHelper.clearModels()
+                    }
+                },
+            )
+        }
     }
 
     TopAppBar(
         title = { Text(stringResource(R.string.storage)) },
         navigationIcon = {
-            IconButton(onClick = navController::navigateUp) {
+            IconButton(
+                onClick = navController::navigateUp,
+                onLongClick = navController::backToMain
+            ) {
                 Icon(
                     painterResource(R.drawable.arrow_back),
                     contentDescription = null

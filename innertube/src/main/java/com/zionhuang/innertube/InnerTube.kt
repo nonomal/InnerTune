@@ -47,6 +47,8 @@ class InnerTube {
             httpClient = createClient()
         }
 
+    var useLoginForBrowse: Boolean = false
+
     @OptIn(ExperimentalSerializationApi::class)
     private fun createClient() = HttpClient(OkHttp) {
         expectSuccess = true
@@ -76,7 +78,7 @@ class InnerTube {
         }
     }
 
-    private fun HttpRequestBuilder.configYTClient(client: YouTubeClient) {
+    private fun HttpRequestBuilder.ytClient(client: YouTubeClient, setLogin: Boolean = false) {
         contentType(ContentType.Application.Json)
         headers {
             append("X-Goog-Api-Format-Version", "1")
@@ -86,12 +88,14 @@ class InnerTube {
             if (client.referer != null) {
                 append("Referer", client.referer)
             }
-            cookie?.let { cookie ->
-                append("cookie", cookie)
-                if ("SAPISID" !in cookieMap) return@let
-                val currentTime = System.currentTimeMillis() / 1000
-                val sapisidHash = sha1("$currentTime ${cookieMap["SAPISID"]} https://music.youtube.com")
-                append("Authorization", "SAPISIDHASH ${currentTime}_${sapisidHash}")
+            if (setLogin) {
+                cookie?.let { cookie ->
+                    append("cookie", cookie)
+                    if ("SAPISID" !in cookieMap) return@let
+                    val currentTime = System.currentTimeMillis() / 1000
+                    val sapisidHash = sha1("$currentTime ${cookieMap["SAPISID"]} https://music.youtube.com")
+                    append("Authorization", "SAPISIDHASH ${currentTime}_${sapisidHash}")
+                }
             }
         }
         userAgent(client.userAgent)
@@ -105,7 +109,7 @@ class InnerTube {
         params: String? = null,
         continuation: String? = null,
     ) = httpClient.post("search") {
-        configYTClient(client)
+        ytClient(client, setLogin = useLoginForBrowse)
         setBody(
             SearchBody(
                 context = client.toContext(locale, visitorData),
@@ -122,7 +126,7 @@ class InnerTube {
         videoId: String,
         playlistId: String?,
     ) = httpClient.post("player") {
-        configYTClient(client)
+        ytClient(client, setLogin = true)
         setBody(
             PlayerBody(
                 context = client.toContext(locale, visitorData).let {
@@ -150,8 +154,9 @@ class InnerTube {
         browseId: String? = null,
         params: String? = null,
         continuation: String? = null,
+        setLogin: Boolean = false,
     ) = httpClient.post("browse") {
-        configYTClient(client)
+        ytClient(client, setLogin = setLogin || useLoginForBrowse)
         setBody(
             BrowseBody(
                 context = client.toContext(locale, visitorData),
@@ -175,7 +180,7 @@ class InnerTube {
         params: String?,
         continuation: String? = null,
     ) = httpClient.post("next") {
-        configYTClient(client)
+        ytClient(client, setLogin = true)
         setBody(
             NextBody(
                 context = client.toContext(locale, visitorData),
@@ -193,7 +198,7 @@ class InnerTube {
         client: YouTubeClient,
         input: String,
     ) = httpClient.post("music/get_search_suggestions") {
-        configYTClient(client)
+        ytClient(client)
         setBody(
             GetSearchSuggestionsBody(
                 context = client.toContext(locale, visitorData),
@@ -207,7 +212,7 @@ class InnerTube {
         videoIds: List<String>?,
         playlistId: String?,
     ) = httpClient.post("music/get_queue") {
-        configYTClient(client)
+        ytClient(client)
         setBody(
             GetQueueBody(
                 context = client.toContext(locale, visitorData),
@@ -236,7 +241,7 @@ class InnerTube {
     suspend fun getSwJsData() = httpClient.get("https://music.youtube.com/sw.js_data")
 
     suspend fun accountMenu(client: YouTubeClient) = httpClient.post("account/account_menu") {
-        configYTClient(client)
+        ytClient(client, setLogin = true)
         setBody(AccountMenuBody(client.toContext(locale, visitorData)))
     }
 }

@@ -44,7 +44,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -61,7 +63,6 @@ import com.zionhuang.innertube.models.AlbumItem
 import com.zionhuang.innertube.models.ArtistItem
 import com.zionhuang.innertube.models.PlaylistItem
 import com.zionhuang.innertube.models.SongItem
-import com.zionhuang.innertube.models.WatchEndpoint
 import com.zionhuang.music.LocalDatabase
 import com.zionhuang.music.LocalPlayerAwareWindowInsets
 import com.zionhuang.music.LocalPlayerConnection
@@ -73,6 +74,7 @@ import com.zionhuang.music.models.toMediaMetadata
 import com.zionhuang.music.playback.queues.YouTubeQueue
 import com.zionhuang.music.ui.component.AutoResizeText
 import com.zionhuang.music.ui.component.FontSizeRange
+import com.zionhuang.music.ui.component.IconButton
 import com.zionhuang.music.ui.component.LocalMenuState
 import com.zionhuang.music.ui.component.NavigationTitle
 import com.zionhuang.music.ui.component.SongListItem
@@ -87,6 +89,7 @@ import com.zionhuang.music.ui.menu.YouTubeAlbumMenu
 import com.zionhuang.music.ui.menu.YouTubeArtistMenu
 import com.zionhuang.music.ui.menu.YouTubePlaylistMenu
 import com.zionhuang.music.ui.menu.YouTubeSongMenu
+import com.zionhuang.music.ui.utils.backToMain
 import com.zionhuang.music.ui.utils.fadingEdge
 import com.zionhuang.music.ui.utils.resize
 import com.zionhuang.music.viewmodels.ArtistViewModel
@@ -102,6 +105,7 @@ fun ArtistScreen(
     val context = LocalContext.current
     val database = LocalDatabase.current
     val menuState = LocalMenuState.current
+    val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val playerConnection = LocalPlayerConnection.current ?: return
     val isPlaying by playerConnection.isPlaying.collectAsState()
@@ -115,7 +119,7 @@ fun ArtistScreen(
 
     val transparentAppBar by remember {
         derivedStateOf {
-            lazyListState.firstVisibleItemIndex == 0
+            lazyListState.firstVisibleItemIndex <= 1
         }
     }
 
@@ -230,7 +234,6 @@ fun ArtistScreen(
                                             SongMenu(
                                                 originalSong = song,
                                                 navController = navController,
-                                                playerConnection = playerConnection,
                                                 onDismiss = menuState::dismiss
                                             )
                                         }
@@ -248,10 +251,10 @@ fun ArtistScreen(
                                     if (song.id == mediaMetadata?.id) {
                                         playerConnection.player.togglePlayPause()
                                     } else {
-                                        playerConnection.playQueue(YouTubeQueue(WatchEndpoint(videoId = song.id), song.toMediaMetadata()))
+                                        playerConnection.playQueue(YouTubeQueue.radio(song.toMediaMetadata()))
                                     }
                                 }
-                                .animateItemPlacement()
+                                .animateItem()
                         )
                     }
                 }
@@ -284,7 +287,6 @@ fun ArtistScreen(
                                                 YouTubeSongMenu(
                                                     song = song,
                                                     navController = navController,
-                                                    playerConnection = playerConnection,
                                                     onDismiss = menuState::dismiss
                                                 )
                                             }
@@ -301,10 +303,10 @@ fun ArtistScreen(
                                         if (song.id == mediaMetadata?.id) {
                                             playerConnection.player.togglePlayPause()
                                         } else {
-                                            playerConnection.playQueue(YouTubeQueue(WatchEndpoint(videoId = song.id), song.toMediaMetadata()))
+                                            playerConnection.playQueue(YouTubeQueue.radio(song.toMediaMetadata()))
                                         }
                                     }
-                                    .animateItemPlacement()
+                                    .animateItem()
                             )
                         }
                     } else {
@@ -322,42 +324,40 @@ fun ArtistScreen(
                                             else -> false
                                         },
                                         isPlaying = isPlaying,
+                                        coroutineScope = coroutineScope,
                                         modifier = Modifier
                                             .combinedClickable(
                                                 onClick = {
                                                     when (item) {
-                                                        is SongItem -> playerConnection.playQueue(YouTubeQueue(WatchEndpoint(videoId = item.id), item.toMediaMetadata()))
+                                                        is SongItem -> playerConnection.playQueue(YouTubeQueue.radio(item.toMediaMetadata()))
                                                         is AlbumItem -> navController.navigate("album/${item.id}")
                                                         is ArtistItem -> navController.navigate("artist/${item.id}")
                                                         is PlaylistItem -> navController.navigate("online_playlist/${item.id}")
                                                     }
                                                 },
                                                 onLongClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                     menuState.show {
                                                         when (item) {
                                                             is SongItem -> YouTubeSongMenu(
                                                                 song = item,
                                                                 navController = navController,
-                                                                playerConnection = playerConnection,
                                                                 onDismiss = menuState::dismiss
                                                             )
 
                                                             is AlbumItem -> YouTubeAlbumMenu(
-                                                                album = item,
+                                                                albumItem = item,
                                                                 navController = navController,
-                                                                playerConnection = playerConnection,
                                                                 onDismiss = menuState::dismiss
                                                             )
 
                                                             is ArtistItem -> YouTubeArtistMenu(
                                                                 artist = item,
-                                                                playerConnection = playerConnection,
                                                                 onDismiss = menuState::dismiss
                                                             )
 
                                                             is PlaylistItem -> YouTubePlaylistMenu(
                                                                 playlist = item,
-                                                                playerConnection = playerConnection,
                                                                 coroutineScope = coroutineScope,
                                                                 onDismiss = menuState::dismiss
                                                             )
@@ -365,7 +365,7 @@ fun ArtistScreen(
                                                     }
                                                 }
                                             )
-                                            .animateItemPlacement()
+                                            .animateItem()
                                     )
                                 }
                             }
@@ -421,7 +421,10 @@ fun ArtistScreen(
     TopAppBar(
         title = { if (!transparentAppBar) Text(artistPage?.artist?.title.orEmpty()) },
         navigationIcon = {
-            IconButton(onClick = navController::navigateUp) {
+            IconButton(
+                onClick = navController::navigateUp,
+                onLongClick = navController::backToMain
+            ) {
                 Icon(
                     painterResource(R.drawable.arrow_back),
                     contentDescription = null
@@ -432,13 +435,9 @@ fun ArtistScreen(
             IconButton(
                 onClick = {
                     database.transaction {
-                        val artist = libraryArtist
+                        val artist = libraryArtist?.artist
                         if (artist != null) {
-                            update(
-                                artist.copy(
-                                    bookmarkedAt = if (artist.bookmarkedAt != null) null else LocalDateTime.now()
-                                )
-                            )
+                            update(artist.toggleLike())
                         } else {
                             artistPage?.artist?.let {
                                 insert(
@@ -455,8 +454,8 @@ fun ArtistScreen(
                 }
             ) {
                 Icon(
-                    painter = painterResource(if (libraryArtist?.bookmarkedAt != null) R.drawable.bookmark_filled else R.drawable.bookmark),
-                    tint = if (libraryArtist?.bookmarkedAt != null) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                    painter = painterResource(if (libraryArtist?.artist?.bookmarkedAt != null) R.drawable.favorite else R.drawable.favorite_border),
+                    tint = if (libraryArtist?.artist?.bookmarkedAt != null) MaterialTheme.colorScheme.error else LocalContentColor.current,
                     contentDescription = null
                 )
             }

@@ -8,19 +8,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarScrollBehavior
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -36,8 +33,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.zionhuang.music.LocalPlayerAwareWindowInsets
 import com.zionhuang.music.R
+import com.zionhuang.music.ui.component.IconButton
+import com.zionhuang.music.ui.component.NavigationTitle
 import com.zionhuang.music.ui.component.shimmer.ListItemPlaceHolder
 import com.zionhuang.music.ui.component.shimmer.ShimmerHost
+import com.zionhuang.music.ui.utils.backToMain
 import com.zionhuang.music.viewmodels.MoodAndGenresViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -67,12 +67,8 @@ fun MoodAndGenresScreen(
 
         moodAndGenresList?.forEach { moodAndGenres ->
             item {
-                Text(
-                    text = moodAndGenres.title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                NavigationTitle(
+                    title = moodAndGenres.title
                 )
 
                 Column(
@@ -105,7 +101,10 @@ fun MoodAndGenresScreen(
     TopAppBar(
         title = { Text(stringResource(R.string.mood_and_genres)) },
         navigationIcon = {
-            IconButton(onClick = navController::navigateUp) {
+            IconButton(
+                onClick = navController::navigateUp,
+                onLongClick = navController::backToMain
+            ) {
                 Icon(
                     painterResource(R.drawable.arrow_back),
                     contentDescription = null
@@ -127,7 +126,7 @@ fun MoodAndGenresButton(
         modifier = modifier
             .height(MoodAndGenresButtonHeight)
             .clip(RoundedCornerShape(6.dp))
-            .background(MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp)
     ) {
